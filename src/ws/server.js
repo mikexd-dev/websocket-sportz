@@ -1,4 +1,5 @@
-import { WebSocketServer } from "ws";
+import {WebSocket, WebSocketServer} from 'ws';
+import {wsArcjet} from "../arcjet.js";
 
 const matchSubscribers = new Map();
 
@@ -123,38 +124,40 @@ function handleMessage(socket, data) {
     }
 }
 
-
-/**
- * Create a WebSocketServer bound to the given HTTP server.
- * @param {import('http').Server} app - HTTP server instance to attach the WebSocketServer to.
- * @returns {import('ws').WebSocketServer} The created WebSocketServer instance.
- */
-export function createWSServer(app) {
-    const wss = new WebSocketServer({ server: app });
-
-    return wss;
-}
-
-/**
- * Create and attach a WebSocket server to the given HTTP server and return helpers for broadcasting events.
- *
- * @param {import('http').Server} server - The Node HTTP/S server to bind the WebSocket server to.
- * @returns {{broadcastMatchCreated: function(match: Object): void, broadcastCommentary: function(matchId: number, comment: Object): void}} An object exposing:
- *  - `broadcastMatchCreated(match)`: broadcasts a `match_created` event containing `match` to all connected clients.
- *  - `broadcastCommentary(matchId, comment)`: broadcasts a `commentary` event containing `comment` to subscribers of the specified `matchId`.
- */
 export function attachWebSocketServer(server) {
-    const wss = new WebSocketServer({ server , path: '/ws', maxPayload: 1024 * 1024 * 10 });
+    const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 * 10 });
 
-    wss.on('upgrade', (request, socket, head) => {
-        const { pathname } = new URL(req.url, `http://${req.headers.host}`);
+    server.on('upgrade', async (request, socket, head) => {
+        const { pathname } = new URL(request.url, `http://${request.headers.host}`);
 
         if (pathname !== '/ws') {
+            socket.destroy();
             return;
         }
-        
-        wss.handleUpgrade(request, socket, head, (socket) => {
-            wss.emit('connection', socket, request);
+
+        if (wsArcjet) {
+            try {
+                const decision = await wsArcjet.protect(request);
+
+                if (decision.isDenied()) {
+                    if (decision.reason.isRateLimit()) {
+                        socket.write('HTTP/1.1 429 Too Many Requests\r\n\r\n');
+                    } else {
+                        socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+                    }
+                    socket.destroy();
+                    return;
+                }
+            } catch (e) {
+                console.error('WS upgrade protection error', e);
+                socket.write('HTTP/1.1 500 Internal Server Error\r\n\r\n');
+                socket.destroy();
+                return;
+            }
+        }
+
+        wss.handleUpgrade(request, socket, head, (ws) => {
+            wss.emit('connection', ws, request);
         });
     });
 
@@ -183,11 +186,15 @@ export function attachWebSocketServer(server) {
 
     const interval = setInterval(() => {
         wss.clients.forEach((ws) => {
-            if (ws.isAlive === false) return ws.terminate();
-
+            if (ws.isAlive === false) {
+                ws.terminate();
+                return;
+            }
+    
             ws.isAlive = false;
             ws.ping();
-        })}, 30000);
+        });
+    }, 30000);
 
     wss.on('close', () => clearInterval(interval));
 
