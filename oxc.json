@@ -1,0 +1,14 @@
+{
+    "linter": {
+      "rules": {
+        "recommended": true,
+        "correctness": true,
+        "suspicious": true,
+        "style": false
+      }
+    },
+    "typescript": {
+      "strict": true
+    }
+  }
+  
