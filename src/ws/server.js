@@ -108,6 +108,7 @@ function handleMessage(socket, data) {
         message = JSON.parse(data.toString());
     } catch {
         sendJson(socket, { type: 'error', message: 'Invalid JSON' });
+        return;
     }
 
     if(message?.type === "subscribe" && Number.isInteger(message.matchId)) {
@@ -121,9 +122,23 @@ function handleMessage(socket, data) {
         unsubscribe(message.matchId, socket);
         socket.subscriptions.delete(message.matchId);
         sendJson(socket, { type: 'unsubscribed', matchId: message.matchId });
+        return;
     }
 }
 
+/**
+ * Attach a WebSocket server to an existing HTTP server with Arcjet rate limiting and security protection.
+ *
+ * Creates a WebSocket server that:
+ * - Handles upgrades on the `/ws` path
+ * - Applies Arcjet rate limiting (5 connections per 2 seconds)
+ * - Implements heartbeat ping/pong mechanism (30s interval)
+ * - Manages match subscriptions
+ * - Provides broadcast functions for match events
+ *
+ * @param {import('http').Server} server - The HTTP server instance to attach WebSocket functionality to.
+ * @returns {{ broadcastMatchCreated: Function, broadcastCommentary: Function }} Object with broadcast functions for match events.
+ */
 export function attachWebSocketServer(server) {
     const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 * 10 });
 
@@ -210,10 +225,21 @@ export function attachWebSocketServer(server) {
 
     wss.on('close', () => clearInterval(interval));
 
+    /**
+     * Broadcast a match creation event to all connected WebSocket clients.
+     *
+     * @param {Object} match - The match object to broadcast (typically includes id, teams, startTime, etc).
+     */
     function broadcastMatchCreated(match) {
         broadcastToAll(wss, { type: 'match_created', data: match });
     }
 
+    /**
+     * Broadcast a commentary update to all clients subscribed to a specific match.
+     *
+     * @param {number} matchId - The match identifier whose subscribers should receive the commentary.
+     * @param {Object} comment - The commentary data to broadcast (typically includes text, timestamp, etc).
+     */
     function broadcastCommentary(matchId, comment) {
         broadcastToMatch(matchId, { type: 'commentary', data: comment });
     }
