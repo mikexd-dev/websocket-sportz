@@ -128,7 +128,15 @@ export function attachWebSocketServer(server) {
     const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 * 10 });
 
     server.on('upgrade', async (request, socket, head) => {
-        const { pathname } = new URL(request.url, `http://${request.headers.host}`);
+        let pathname;
+        try {
+            const url = new URL(request.url, `http://${request.headers.host}`);
+            pathname = url.pathname;
+        } catch (e) {
+            console.error('URL parsing error in upgrade handler:', e);
+            socket.destroy();
+            return;
+        }
 
         if (pathname !== '/ws') {
             socket.destroy();
@@ -190,7 +198,11 @@ export function attachWebSocketServer(server) {
                 ws.terminate();
                 return;
             }
-    
+
+            if (ws.readyState !== WebSocket.OPEN) {
+                return;
+            }
+
             ws.isAlive = false;
             ws.ping();
         });
